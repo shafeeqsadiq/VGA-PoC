@@ -5,9 +5,8 @@ Official reference implementation for the ~373M parameter VGA policy benchmarked
 ---
 
 ## Technical Highlights
-* **Lightweight Backbone**: SigLIP-B/16 (LoRA blocks 6–12) compressed via a $3\times$ Space-to-Depth Projector ($576 \to 64$ tokens) coupled to a pruned 12-layer SmolLM2 spine (~181M params).
-* **Zero-Overhead 3D Grounding**: Centroid Ray-RoPE projects metric unit rays ($\mathbf{d} \in \mathbb{S}^2$) and camera origin translation into visual tokens with zero test-time latency penalty.
-* **Continuous Action Expert**: 12-layer Diffusion Transformer (DiT) executing 4-step Euler ODE integration ($\le 7.2\text{ ms}$, total policy latency $\le 18\text{ ms}$ at 50 Hz).
-* **Multi-Objective Loss**: Error-weighted flow matching regularized with annealed kinematic acceleration (*L*<sub>acc</sub>), jerk penalties (*L*<sub>jerk</sub>), and an auxiliary VQ-depth cross-entropy head ($\mathcal{L}_{vq}$) that is detached at test time.
-
+* **Compact Vision-Language Core**: Pairs lightweight vision model (SigLIP) with compact language model (SmolLM2, ~181M params). A custom projector compresses visual tokens from 576 down to 64, cutting memory footprint while preserving critical manipulation features.
+* **Built-in 3D Spatial Awareness**: Embeds real-world 3D camera angles and depth directly into the image features using Centroid Ray-RoPE, giving accurate spatial positioning with zero extra delay during deployment.
+* **Fast, Smooth Action Generation**: Uses a 12-layer Diffusion Transformer (DiT) that generates 16-step arm trajectories in just 4 quick calculation steps. The action solver runs in ~7.2 ms, keeping total decision latency under 18 ms for real-time 50 Hz control.
+* **Physics-Informed Training**: Trains model to match expert demonstrations while directly penalizing sudden acceleration spikes and jerky motor commands. An auxiliary 3D depth helper guides visual learning during training and is dropped completely at test time.
 ---
