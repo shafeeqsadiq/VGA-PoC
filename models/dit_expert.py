@@ -57,12 +57,12 @@ class DiTBlock(nn.Module):
         
         # 1. Modulated Self-Attention
         norm_x = (1 + scale_msa.unsqueeze(1)) * self.norm1(x) + shift_msa.unsqueeze(1)
-        sa_out, _ = self.self_attn(norm_x, norm_x, norm_x)
+        sa_out, _ = self.self_attn(norm_x, norm_x, norm_x, need_weights=False)
         x = x + gate_msa.unsqueeze(1) * sa_out
 
         # 2. Cross-Attention to multimodal context
         norm_x2 = self.norm2(x)
-        ca_out, _ = self.cross_attn(norm_x2, context, context)
+        ca_out, _ = self.cross_attn(norm_x2, context, context, need_weights=False)
         x = x + ca_out
 
         # 3. Modulated Feed-Forward MLP
@@ -186,6 +186,41 @@ class DiTActionExpert(nn.Module):
         tau_broadcast = tau.view(-1, 1, 1).to(device=x_t.device, dtype=x_t.dtype)
         return x_t + (1.0 - tau_broadcast) * v_pred
 
+    def _record_euler_graph(self, B: int, S: int, device: torch.device, dtype: torch.dtype):
+        dt = 1.0 / 4.0
+        s_ctx = torch.zeros(B, S, self.context_proj.in_features, device=device, dtype=dtype)
+        s_prev = torch.zeros(B, self.prefix_len, 6, device=device, dtype=dtype)
+        s_x0 = torch.zeros(B, self.chunk_horizon, self.action_dim, device=device, dtype=dtype)
+        s_out = torch.zeros(B, self.chunk_horizon, self.action_dim, device=device, dtype=dtype)
+
+        def _step(x_in, ctx_in, prev_in):
+            a_prev_6d = prev_in[..., :6].reshape(B, -1)
+            p_embed = self.prefix_encoder(a_prev_6d)
+            ctx = self.context_proj(ctx_in)
+            x = x_in
+            for i in range(4):
+                tau = torch.full((B,), i * dt, device=device, dtype=dtype)
+                t_embed = self.time_emb(tau)
+                cond = t_embed + p_embed
+                h = self.action_in_proj(x) + self.pos_emb[:, :self.chunk_horizon, :]
+                for block in self.blocks:
+                    h = block(h, cond, ctx)
+                v_pred = self.out_proj(self.final_norm(h))
+                x = x + v_pred * dt
+            return x
+
+        s = torch.cuda.Stream()
+        s.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(s):
+            for _ in range(3):
+                _ = _step(s_x0, s_ctx, s_prev)
+        torch.cuda.current_stream().wait_stream(s)
+
+        g = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g):
+            s_out = _step(s_x0, s_ctx, s_prev)
+        return g, s_x0, s_ctx, s_prev, s_out
+
     @torch.inference_mode()
     def sample_4step_euler(
         self,
@@ -194,20 +229,37 @@ class DiTActionExpert(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ) -> torch.Tensor:
-        """
-        Runs 4-step Euler ODE integration (NFE=4) to sample clean action chunk.
-        """
-        B = context.shape[0]
+        B, S = context.shape[0], context.shape[1]
         device = device or context.device
         dtype = dtype or context.dtype
-        dt = 1.0 / 4.0
 
-        # Sample initial noise x_0 ~ N(0, I)
+        # Replay CUDA Graph if enabled and running on CUDA
+        if getattr(self, "enable_cuda_graphs", True) and device.type == "cuda":
+            if not hasattr(self, "_graphs"):
+                self._graphs = {}
+            key = (B, S, dtype)
+            if key not in self._graphs:
+                self._graphs[key] = self._record_euler_graph(B, S, device, dtype)
+            g, s_x0, s_ctx, s_prev, s_out = self._graphs[key]
+            s_ctx.copy_(context)
+            s_prev.copy_(a_prev[..., :6])
+            s_x0.normal_()
+            g.replay()
+            return s_out.clone()
+
+        # Fallback standard eager ODE loop
+        dt = 1.0 / 4.0
         x = torch.randn(B, self.chunk_horizon, self.action_dim, device=device, dtype=dtype)
-        
+        a_prev_6d = a_prev[..., :6].reshape(B, -1).to(device=device, dtype=dtype)
+        p_embed = self.prefix_encoder(a_prev_6d)
+        ctx = self.context_proj(context.to(device=device, dtype=dtype))
         for i in range(4):
             tau = torch.full((B,), i * dt, device=device, dtype=dtype)
-            v_pred = self.forward(x, tau, context, a_prev)
+            t_embed = self.time_emb(tau)
+            cond = t_embed + p_embed
+            h = self.action_in_proj(x) + self.pos_emb[:, :self.chunk_horizon, :]
+            for block in self.blocks:
+                h = block(h, cond, ctx)
+            v_pred = self.out_proj(self.final_norm(h))
             x = x + v_pred * dt
-
         return x

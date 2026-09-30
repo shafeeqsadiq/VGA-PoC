@@ -63,6 +63,23 @@ class VGAPolicy(nn.Module):
         # Cached nominal rays buffer
         self.register_buffer("cached_rays", None, persistent=False)
 
+    def optimize_for_inference(self):
+        """Compiles backbones and arms CUDA graphs for <=18ms deployment."""
+        torch.set_float32_matmul_precision("high")
+        if self.lm_backbone is not None:
+            self.lm_backbone.config.use_cache = False
+            try:
+                self.lm_backbone = torch.compile(self.lm_backbone, mode="reduce-overhead")
+            except Exception:
+                self.lm_backbone = torch.compile(self.lm_backbone, mode="default")
+        if self.vision_encoder is not None:
+            try:
+                self.vision_encoder = torch.compile(self.vision_encoder, mode="reduce-overhead")
+            except Exception:
+                self.vision_encoder = torch.compile(self.vision_encoder, mode="default")
+        self.dit.enable_cuda_graphs = True
+        return self
+
     def _prepare_rgb(self, rgb: Union[torch.Tensor, np.ndarray]) -> torch.Tensor:
         """Sanitizes image shape to [B, 3, 384, 384] and normalizes float values."""
         if isinstance(rgb, np.ndarray):
@@ -80,17 +97,19 @@ class VGAPolicy(nn.Module):
         if rgb.shape[-1] == 3:
             rgb = rgb.permute(0, 3, 1, 2)
 
-        # Rescale uint8 range [0, 255] to [0.0, 1.0]
-        if rgb.max() > 1.0:
+        # Direct GPU tensor normalization without scalar reduction sync
+        is_uint8 = (rgb.dtype == torch.uint8)
+        rgb = rgb.to(device=ref_param.device, dtype=ref_param.dtype, non_blocking=True)
+        if is_uint8:
             rgb = rgb / 255.0
 
         # Enforce exact SigLIP input resolution (384, 384)
-        if rgb.shape[-2:] != CONFIG.vis_input_size:
+        if rgb.shape[-2:] != tuple(CONFIG.vis_input_size):
             rgb = TF.resize(
                 rgb,
                 list(CONFIG.vis_input_size),
-                interpolation=InterpolationMode.BICUBIC,
-                antialias=True
+                interpolation=InterpolationMode.BILINEAR,
+                antialias=False
             )
 
         return rgb

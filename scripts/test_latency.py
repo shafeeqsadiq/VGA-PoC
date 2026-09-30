@@ -46,6 +46,9 @@ def benchmark_policy_latency(
             raise e
 
     policy.eval()
+    if device.type == "cuda":
+        torch.set_float32_matmul_precision("high")
+        policy.optimize_for_inference()
 
     # Synthetic observation inputs
     dummy_rgb = np.random.randint(0, 256, (384, 384, 3), dtype=np.uint8)

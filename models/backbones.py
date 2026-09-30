@@ -20,9 +20,9 @@ def load_siglip_lora(
     into attention layers 6-11 to prevent few-shot overfitting.
     """
     try:
-        vision_model = SiglipVisionModel.from_pretrained(model_name)
+        vision_model = SiglipVisionModel.from_pretrained(model_name, torch_dtype=torch.bfloat16, attn_implementation="sdpa")
     except Exception:
-        full_model = AutoModel.from_pretrained(model_name)
+        full_model = AutoModel.from_pretrained(model_name, torch_dtype=torch.bfloat16, attn_implementation="sdpa")
         vision_model = getattr(full_model, "vision_model", full_model)
 
     # Freeze base model parameters
@@ -72,9 +72,10 @@ def load_pruned_smollm2_lora(
     config.num_hidden_layers = num_layers
 
     try:
-        model = AutoModel.from_pretrained(model_name, config=config, ignore_mismatched_sizes=True)
+        config._attn_implementation = "sdpa"
+        model = AutoModel.from_pretrained(model_name, config=config, torch_dtype=torch.bfloat16, attn_implementation="sdpa", ignore_mismatched_sizes=True)
     except Exception:
-        model = AutoModel.from_pretrained(model_name)
+        model = AutoModel.from_pretrained(model_name, torch_dtype=torch.bfloat16, attn_implementation="sdpa")
         model.config.num_hidden_layers = num_layers
 
     # Critical: Enforce nn.ModuleList registration to preserve autograd and device transfers
