@@ -9,7 +9,7 @@ from typing import Dict, List
 import numpy as np
 import torch
 from tqdm import tqdm
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 TARGET_TASKS = [
     "pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate",
