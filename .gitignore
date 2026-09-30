@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+data/libero_*
+data/*.hdf5
+data/*.zip
+checkpoints/*.pt
+!checkpoints/.gitkeep
+data/vq_depth/*.pt
+results/*.csv
+!results/.gitkeep
