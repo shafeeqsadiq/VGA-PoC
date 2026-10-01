@@ -147,12 +147,12 @@ def train_vga(args):
         # 1. Apply synthetic drift to simulate deployment error accumulation
         drifted_chunk, drift_norm = injector(x_1_norm, return_drift_norm=True)
 
-        # 2. Linear Flow Matching interpolation: x_tau = (1 - tau) * x_0 + tau * x_1
+        # 2. Linear Flow Matching interpolation with clean ground-truth targets
         B = rgb.shape[0]
         tau = torch.rand(B, device=device)
         x_0 = torch.randn_like(x_1_norm)
         tau_bc = tau.view(-1, 1, 1)
-        x_tau = (1.0 - tau_bc) * x_0 + tau_bc * drifted_chunk
+        x_tau = (1.0 - tau_bc) * x_0 + tau_bc * x_1_norm
 
         # 3. Forward Pass & Loss Calculation under Autocast
         with torch.amp.autocast(device_type="cuda" if device.type == "cuda" else "cpu", dtype=amp_dtype, enabled=use_amp):
@@ -172,7 +172,7 @@ def train_vga(args):
             loss, l_flow, l_acc, l_jerk, l_vq = loss_fn(
                 v_pred=v_pred,
                 x_0=x_0,
-                x_1_norm=drifted_chunk,
+                x_1_norm=x_1_norm,
                 a_prev_phys=a_prev,
                 a_hat_norm=a_hat_norm,
                 vis_tokens=vis_tokens,

@@ -234,7 +234,7 @@ class DiTActionExpert(nn.Module):
         dtype = dtype or context.dtype
 
         # Replay CUDA Graph if enabled and running on CUDA
-        if getattr(self, "enable_cuda_graphs", True) and device.type == "cuda":
+        if False:  # CUDA graphs disabled for inference stability
             if not hasattr(self, "_graphs"):
                 self._graphs = {}
             key = (B, S, dtype)
